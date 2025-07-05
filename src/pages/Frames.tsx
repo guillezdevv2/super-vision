@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Search, Edit, Trash2, Package, DollarSign, Eye, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Plus, Edit, Trash2, Package, DollarSign, AlertTriangle } from 'lucide-react';
+import { ColumnDef } from '@tanstack/react-table';
 import { supabase } from '../config/supabase';
 import { Frame } from '../types';
 import Modal from '../components/UI/Modal';
-import LoadingSpinner from '../components/UI/LoadingSpinner';
+import Table from '../components/UI/Table';
 import { useAuth } from '../contexts/AuthContext';
 
 const Frames = () => {
@@ -13,7 +14,6 @@ const Frames = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingFrame, setEditingFrame] = useState<Frame | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [stockFilter, setStockFilter] = useState<string>('all');
   const [formData, setFormData] = useState({
     name: '',
     brand: '',
@@ -76,6 +76,7 @@ const Frames = () => {
       resetForm();
     } catch (error) {
       console.error('Error saving frame:', error);
+      alert('Error al guardar armadura. Verifica los permisos.');
     }
   };
 
@@ -104,12 +105,13 @@ const Frames = () => {
       try {
         const { error } = await supabase
           .from('frames')
-          .delete()
+          .update({ is_active: false })
           .eq('id', id);
         if (error) throw error;
         fetchFrames();
       } catch (error) {
-        console.error('Error deleting frame:', error);
+        console.error('Error deactivating frame:', error);
+        alert('Error al desactivar armadura.');
       }
     }
   };
@@ -129,6 +131,21 @@ const Frames = () => {
     }
   };
 
+  const toggleFrameStatus = async (id: number, currentStatus: boolean) => {
+    if (!canManage) return;
+    
+    try {
+      const { error } = await supabase
+        .from('frames')
+        .update({ is_active: !currentStatus })
+        .eq('id', id);
+      if (error) throw error;
+      fetchFrames();
+    } catch (error) {
+      console.error('Error updating frame status:', error);
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       name: '',
@@ -145,25 +162,140 @@ const Frames = () => {
   };
 
   const getStockStatus = (stock: number) => {
-    if (stock === 0) return { color: 'bg-red-100 text-red-800', label: 'Sin Stock' };
-    if (stock <= 5) return { color: 'bg-yellow-100 text-yellow-800', label: 'Stock Bajo' };
-    return { color: 'bg-green-100 text-green-800', label: 'En Stock' };
+    if (stock === 0) return { color: 'bg-red-100 text-red-800', label: 'Sin Stock', icon: <AlertTriangle size={14} /> };
+    if (stock <= 5) return { color: 'bg-yellow-100 text-yellow-800', label: 'Stock Bajo', icon: <AlertTriangle size={14} /> };
+    return { color: 'bg-green-100 text-green-800', label: 'En Stock', icon: <Package size={14} /> };
   };
 
-  const filteredFrames = frames.filter(frame => {
-    const matchesSearch = frame.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         frame.brand.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         frame.model.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesStock = stockFilter === 'all' || 
-                        (stockFilter === 'low' && frame.stock <= 5) ||
-                        (stockFilter === 'out' && frame.stock === 0) ||
-                        (stockFilter === 'available' && frame.stock > 5);
-    
-    return matchesSearch && matchesStock;
-  });
+  const columns = useMemo<ColumnDef<Frame>[]>(() => [
+    {
+      accessorKey: 'name',
+      header: 'Producto',
+      cell: ({ row }) => (
+        <div>
+          <div className="font-medium text-gray-900">{row.original.name}</div>
+          <div className="text-sm text-gray-500">{row.original.brand} - {row.original.model}</div>
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'details',
+      header: 'Detalles',
+      cell: ({ row }) => (
+        <div className="space-y-1">
+          <div className="text-sm text-gray-600">
+            <span className="font-medium">Color:</span> {row.original.color}
+          </div>
+          <div className="text-sm text-gray-600">
+            <span className="font-medium">Material:</span> {row.original.material}
+          </div>
+          <div className="text-sm text-gray-600">
+            <span className="font-medium">Talla:</span> {row.original.size}
+          </div>
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'price',
+      header: 'Precio',
+      cell: ({ row }) => (
+        <div className="flex items-center text-green-600 font-semibold">
+          <DollarSign size={16} className="mr-1" />
+          {row.original.price.toLocaleString()}
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'stock',
+      header: 'Stock',
+      cell: ({ row }) => {
+        const stockStatus = getStockStatus(row.original.stock);
+        return (
+          <div className="space-y-2">
+            <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${stockStatus.color}`}>
+              {stockStatus.icon}
+              <span className="ml-1">{stockStatus.label}</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              {canManage && (
+                <>
+                  <button
+                    onClick={() => updateStock(row.original.id, Math.max(0, row.original.stock - 1))}
+                    className="text-red-600 hover:text-red-800 text-sm font-medium px-2 py-1 rounded"
+                    disabled={row.original.stock === 0}
+                  >
+                    -
+                  </button>
+                </>
+              )}
+              <span className="font-bold text-lg min-w-[2rem] text-center">{row.original.stock}</span>
+              {canManage && (
+                <button
+                  onClick={() => updateStock(row.original.id, row.original.stock + 1)}
+                  className="text-green-600 hover:text-green-800 text-sm font-medium px-2 py-1 rounded"
+                >
+                  +
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: 'is_active',
+      header: 'Estado',
+      cell: ({ row }) => (
+        <button
+          onClick={() => toggleFrameStatus(row.original.id, row.original.is_active)}
+          disabled={!canManage}
+          className={`px-2 py-1 text-xs font-semibold rounded-full ${
+            row.original.is_active 
+              ? 'bg-green-100 text-green-800 hover:bg-green-200' 
+              : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+          } ${!canManage ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+        >
+          {row.original.is_active ? 'Activo' : 'Inactivo'}
+        </button>
+      ),
+    },
+    {
+      id: 'actions',
+      header: 'Acciones',
+      cell: ({ row }) => (
+        <div className="flex items-center space-x-2">
+          {canManage && (
+            <>
+              <button
+                onClick={() => handleEdit(row.original)}
+                className="text-blue-600 hover:text-blue-800"
+                title="Editar"
+              >
+                <Edit size={16} />
+              </button>
+              <button
+                onClick={() => handleDelete(row.original.id)}
+                className="text-red-600 hover:text-red-800"
+                title="Eliminar"
+              >
+                <Trash2 size={16} />
+              </button>
+            </>
+          )}
+        </div>
+      ),
+    },
+  ], [canManage]);
 
-  if (loading) return <LoadingSpinner />;
+  const filteredData = useMemo(() => {
+    return frames.filter(frame =>
+      frame.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      frame.brand.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      frame.model.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      frame.color.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      frame.material.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [frames, searchTerm]);
 
   return (
     <div className="space-y-6">
@@ -180,119 +312,15 @@ const Frames = () => {
         )}
       </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-lg shadow-sm p-4">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-            <input
-              type="text"
-              placeholder="Buscar por nombre, marca o modelo..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-          <select
-            value={stockFilter}
-            onChange={(e) => setStockFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            <option value="all">Todos los stocks</option>
-            <option value="available">Stock disponible</option>
-            <option value="low">Stock bajo</option>
-            <option value="out">Sin stock</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Frames Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredFrames.map((frame) => {
-          const stockStatus = getStockStatus(frame.stock);
-          return (
-            <div key={frame.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">{frame.name}</h3>
-                {canManage && (
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={() => handleEdit(frame)}
-                      className="text-blue-600 hover:text-blue-800"
-                    >
-                      <Edit size={16} />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(frame.id)}
-                      className="text-red-600 hover:text-red-800"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                )}
-              </div>
-              
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div>
-                    <span className="text-gray-600">Marca:</span>
-                    <p className="font-medium">{frame.brand}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Modelo:</span>
-                    <p className="font-medium">{frame.model}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Color:</span>
-                    <p className="font-medium">{frame.color}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Material:</span>
-                    <p className="font-medium">{frame.material}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Talla:</span>
-                    <p className="font-medium">{frame.size}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Precio:</span>
-                    <p className="font-medium text-green-600">${frame.price.toLocaleString()}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-3 border-t">
-                  <span className={`px-2 py-1 text-xs font-semibold rounded-full ${stockStatus.color}`}>
-                    {stockStatus.label}
-                  </span>
-                  <div className="flex items-center space-x-2">
-                    {canManage && (
-                      <>
-                        <button
-                          onClick={() => updateStock(frame.id, Math.max(0, frame.stock - 1))}
-                          className="text-red-600 hover:text-red-800 text-sm font-medium"
-                          disabled={frame.stock === 0}
-                        >
-                          -
-                        </button>
-                        <span className="font-bold text-lg">{frame.stock}</span>
-                        <button
-                          onClick={() => updateStock(frame.id, frame.stock + 1)}
-                          className="text-green-600 hover:text-green-800 text-sm font-medium"
-                        >
-                          +
-                        </button>
-                      </>
-                    )}
-                    {!canManage && (
-                      <span className="font-bold text-lg">{frame.stock}</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <Table
+        data={filteredData}
+        columns={columns}
+        searchValue={searchTerm}
+        onSearchChange={setSearchTerm}
+        searchPlaceholder="Buscar por nombre, marca, modelo, color o material..."
+        loading={loading}
+        emptyMessage="No se encontraron armaduras"
+      />
 
       {/* Modal */}
       <Modal

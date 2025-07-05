@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Search, Edit, Trash2, Eye, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Plus, Edit, Trash2, Eye, AlertTriangle, Package } from 'lucide-react';
+import { ColumnDef } from '@tanstack/react-table';
 import { supabase } from '../config/supabase';
 import { Crystal } from '../types';
 import Modal from '../components/UI/Modal';
-import LoadingSpinner from '../components/UI/LoadingSpinner';
+import Table from '../components/UI/Table';
 import { useAuth } from '../contexts/AuthContext';
 
 const Crystals = () => {
@@ -13,7 +14,6 @@ const Crystals = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCrystal, setEditingCrystal] = useState<Crystal | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [materialFilter, setMaterialFilter] = useState<string>('all');
   const [formData, setFormData] = useState({
     type: '',
     material: 'organico',
@@ -80,6 +80,7 @@ const Crystals = () => {
       resetForm();
     } catch (error) {
       console.error('Error saving crystal:', error);
+      alert('Error al guardar cristal. Verifica los permisos.');
     }
   };
 
@@ -107,12 +108,13 @@ const Crystals = () => {
       try {
         const { error } = await supabase
           .from('crystals')
-          .delete()
+          .update({ is_active: false })
           .eq('id', id);
         if (error) throw error;
         fetchCrystals();
       } catch (error) {
-        console.error('Error deleting crystal:', error);
+        console.error('Error deactivating crystal:', error);
+        alert('Error al desactivar cristal.');
       }
     }
   };
@@ -132,6 +134,21 @@ const Crystals = () => {
     }
   };
 
+  const toggleCrystalStatus = async (id: number, currentStatus: boolean) => {
+    if (!canManage) return;
+    
+    try {
+      const { error } = await supabase
+        .from('crystals')
+        .update({ is_active: !currentStatus })
+        .eq('id', id);
+      if (error) throw error;
+      fetchCrystals();
+    } catch (error) {
+      console.error('Error updating crystal status:', error);
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       type: '',
@@ -147,9 +164,9 @@ const Crystals = () => {
   };
 
   const getStockStatus = (stock: number) => {
-    if (stock === 0) return { color: 'bg-red-100 text-red-800', label: 'Sin Stock' };
-    if (stock <= 10) return { color: 'bg-yellow-100 text-yellow-800', label: 'Stock Bajo' };
-    return { color: 'bg-green-100 text-green-800', label: 'En Stock' };
+    if (stock === 0) return { color: 'bg-red-100 text-red-800', label: 'Sin Stock', icon: <AlertTriangle size={14} /> };
+    if (stock <= 10) return { color: 'bg-yellow-100 text-yellow-800', label: 'Stock Bajo', icon: <AlertTriangle size={14} /> };
+    return { color: 'bg-green-100 text-green-800', label: 'En Stock', icon: <Package size={14} /> };
   };
 
   const formatCoating = (coating: string) => {
@@ -164,17 +181,133 @@ const Crystals = () => {
     return coatingNames[coating as keyof typeof coatingNames] || coating;
   };
 
-  const filteredCrystals = crystals.filter(crystal => {
-    const matchesSearch = crystal.type.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         crystal.material.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         crystal.coating.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesMaterial = materialFilter === 'all' || crystal.material === materialFilter;
-    
-    return matchesSearch && matchesMaterial;
-  });
+  const columns = useMemo<ColumnDef<Crystal>[]>(() => [
+    {
+      accessorKey: 'type',
+      header: 'Tipo',
+      cell: ({ row }) => (
+        <div>
+          <div className="font-medium text-gray-900">{row.original.type}</div>
+          <div className="text-sm text-gray-500 capitalize">{row.original.material}</div>
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'specifications',
+      header: 'Especificaciones',
+      cell: ({ row }) => (
+        <div className="space-y-1">
+          <div className="text-sm text-gray-600">
+            <span className="font-medium">Índice:</span> {row.original.index}
+          </div>
+          <div className="text-sm text-gray-600">
+            <span className="font-medium">Diámetro:</span> {row.original.diameter}mm
+          </div>
+          <div className="text-sm text-gray-600">
+            <span className="font-medium">Tratamiento:</span> {formatCoating(row.original.coating)}
+          </div>
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'price',
+      header: 'Precio',
+      cell: ({ row }) => (
+        <div className="text-green-600 font-semibold">
+          ${row.original.price.toLocaleString()}
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'stock',
+      header: 'Stock',
+      cell: ({ row }) => {
+        const stockStatus = getStockStatus(row.original.stock);
+        return (
+          <div className="space-y-2">
+            <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${stockStatus.color}`}>
+              {stockStatus.icon}
+              <span className="ml-1">{stockStatus.label}</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              {canManage && (
+                <>
+                  <button
+                    onClick={() => updateStock(row.original.id, Math.max(0, row.original.stock - 1))}
+                    className="text-red-600 hover:text-red-800 text-sm font-medium px-2 py-1 rounded"
+                    disabled={row.original.stock === 0}
+                  >
+                    -
+                  </button>
+                </>
+              )}
+              <span className="font-bold text-lg min-w-[2rem] text-center">{row.original.stock}</span>
+              {canManage && (
+                <button
+                  onClick={() => updateStock(row.original.id, row.original.stock + 1)}
+                  className="text-green-600 hover:text-green-800 text-sm font-medium px-2 py-1 rounded"
+                >
+                  +
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: 'is_active',
+      header: 'Estado',
+      cell: ({ row }) => (
+        <button
+          onClick={() => toggleCrystalStatus(row.original.id, row.original.is_active)}
+          disabled={!canManage}
+          className={`px-2 py-1 text-xs font-semibold rounded-full ${
+            row.original.is_active 
+              ? 'bg-green-100 text-green-800 hover:bg-green-200' 
+              : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+          } ${!canManage ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+        >
+          {row.original.is_active ? 'Activo' : 'Inactivo'}
+        </button>
+      ),
+    },
+    {
+      id: 'actions',
+      header: 'Acciones',
+      cell: ({ row }) => (
+        <div className="flex items-center space-x-2">
+          {canManage && (
+            <>
+              <button
+                onClick={() => handleEdit(row.original)}
+                className="text-blue-600 hover:text-blue-800"
+                title="Editar"
+              >
+                <Edit size={16} />
+              </button>
+              <button
+                onClick={() => handleDelete(row.original.id)}
+                className="text-red-600 hover:text-red-800"
+                title="Eliminar"
+              >
+                <Trash2 size={16} />
+              </button>
+            </>
+          )}
+        </div>
+      ),
+    },
+  ], [canManage]);
 
-  if (loading) return <LoadingSpinner />;
+  const filteredData = useMemo(() => {
+    return crystals.filter(crystal =>
+      crystal.type.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      crystal.material.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      crystal.coating.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      formatCoating(crystal.coating).toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [crystals, searchTerm]);
 
   return (
     <div className="space-y-6">
@@ -191,117 +324,15 @@ const Crystals = () => {
         )}
       </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-lg shadow-sm p-4">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-            <input
-              type="text"
-              placeholder="Buscar por tipo, material o tratamiento..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-          <select
-            value={materialFilter}
-            onChange={(e) => setMaterialFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            <option value="all">Todos los materiales</option>
-            {materials.map(material => (
-              <option key={material} value={material} className="capitalize">
-                {material}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Crystals Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredCrystals.map((crystal) => {
-          const stockStatus = getStockStatus(crystal.stock);
-          return (
-            <div key={crystal.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">{crystal.type}</h3>
-                {canManage && (
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={() => handleEdit(crystal)}
-                      className="text-blue-600 hover:text-blue-800"
-                    >
-                      <Edit size={16} />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(crystal.id)}
-                      className="text-red-600 hover:text-red-800"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                )}
-              </div>
-              
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div>
-                    <span className="text-gray-600">Material:</span>
-                    <p className="font-medium capitalize">{crystal.material}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Índice:</span>
-                    <p className="font-medium">{crystal.index}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Tratamiento:</span>
-                    <p className="font-medium">{formatCoating(crystal.coating)}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Diámetro:</span>
-                    <p className="font-medium">{crystal.diameter}mm</p>
-                  </div>
-                  <div className="col-span-2">
-                    <span className="text-gray-600">Precio:</span>
-                    <p className="font-medium text-green-600">${crystal.price.toLocaleString()}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-3 border-t">
-                  <span className={`px-2 py-1 text-xs font-semibold rounded-full ${stockStatus.color}`}>
-                    {stockStatus.label}
-                  </span>
-                  <div className="flex items-center space-x-2">
-                    {canManage && (
-                      <>
-                        <button
-                          onClick={() => updateStock(crystal.id, Math.max(0, crystal.stock - 1))}
-                          className="text-red-600 hover:text-red-800 text-sm font-medium"
-                          disabled={crystal.stock === 0}
-                        >
-                          -
-                        </button>
-                        <span className="font-bold text-lg">{crystal.stock}</span>
-                        <button
-                          onClick={() => updateStock(crystal.id, crystal.stock + 1)}
-                          className="text-green-600 hover:text-green-800 text-sm font-medium"
-                        >
-                          +
-                        </button>
-                      </>
-                    )}
-                    {!canManage && (
-                      <span className="font-bold text-lg">{crystal.stock}</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <Table
+        data={filteredData}
+        columns={columns}
+        searchValue={searchTerm}
+        onSearchChange={setSearchTerm}
+        searchPlaceholder="Buscar por tipo, material o tratamiento..."
+        loading={loading}
+        emptyMessage="No se encontraron cristales"
+      />
 
       {/* Modal */}
       <Modal

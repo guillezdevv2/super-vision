@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Search, Edit, CheckSquare, Clock, User, Calendar, FileText } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Plus, Edit, CheckSquare, Clock, User, Calendar, FileText } from 'lucide-react';
+import { ColumnDef } from '@tanstack/react-table';
 import { supabase } from '../config/supabase';
 import { Task } from '../types';
 import Modal from '../components/UI/Modal';
-import LoadingSpinner from '../components/UI/LoadingSpinner';
+import Table from '../components/UI/Table';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -14,7 +15,6 @@ const Tasks = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
   const [formData, setFormData] = useState({
     contract_id: '',
     assigned_date: new Date().toISOString().split('T')[0],
@@ -107,6 +107,7 @@ const Tasks = () => {
       resetForm();
     } catch (error) {
       console.error('Error saving task:', error);
+      alert('Error al guardar tarea.');
     }
   };
 
@@ -169,22 +170,127 @@ const Tasks = () => {
     return 'bg-red-500';
   };
 
-  const filteredTasks = tasks.filter(task => {
-    const clientName = `${task.contracts?.clients?.first_name || ''} ${task.contracts?.clients?.last_name || ''}`;
-    const matchesSearch = clientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         task.contracts?.clients?.ci?.includes(searchTerm) ||
-                         task.contracts?.frame?.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const progress = getTaskProgress(task);
-    const matchesStatus = statusFilter === 'all' || 
-                         (statusFilter === 'pending' && progress.percentage < 100) ||
-                         (statusFilter === 'completed' && progress.percentage === 100) ||
-                         (statusFilter === 'in_progress' && progress.percentage > 0 && progress.percentage < 100);
-    
-    return matchesSearch && matchesStatus;
-  });
+  const columns = useMemo<ColumnDef<any>[]>(() => [
+    {
+      accessorKey: 'client',
+      header: 'Cliente',
+      cell: ({ row }) => (
+        <div>
+          <div className="font-medium text-gray-900">
+            {row.original.contracts?.clients?.first_name} {row.original.contracts?.clients?.last_name}
+          </div>
+          <div className="text-sm text-gray-500">CI: {row.original.contracts?.clients?.ci}</div>
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'contract_details',
+      header: 'Contrato',
+      cell: ({ row }) => (
+        <div className="space-y-1">
+          <div className="text-sm text-gray-600">
+            <span className="font-medium">Armadura:</span> {row.original.contracts?.frame || 'No especificado'}
+          </div>
+          <div className="text-sm text-gray-600">
+            <span className="font-medium">Estado:</span> {row.original.contracts?.status}
+          </div>
+          <div className="text-sm text-gray-600">
+            <span className="font-medium">Total:</span> ${row.original.contracts?.total?.toLocaleString()}
+          </div>
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'assigned_date',
+      header: 'Fecha Asignada',
+      cell: ({ row }) => (
+        <div className="flex items-center text-sm text-gray-600">
+          <Calendar size={14} className="mr-2" />
+          <span>{format(new Date(row.original.assigned_date), 'dd MMM yyyy', { locale: es })}</span>
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'progress',
+      header: 'Progreso',
+      cell: ({ row }) => {
+        const progress = getTaskProgress(row.original);
+        const progressColor = getProgressColor(progress.percentage);
+        
+        return (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-700">
+                {progress.completed}/{progress.total}
+              </span>
+              <span className="text-sm text-gray-600">
+                {Math.round(progress.percentage)}%
+              </span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div
+                className={`h-2 rounded-full transition-all duration-300 ${progressColor}`}
+                style={{ width: `${progress.percentage}%` }}
+              ></div>
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: 'steps',
+      header: 'Pasos',
+      cell: ({ row }) => (
+        <div className="grid grid-cols-3 gap-1">
+          {[
+            { key: 'measure', label: 'Med', icon: '📏' },
+            { key: 'mark', label: 'Mar', icon: '✏️' },
+            { key: 'cut', label: 'Cor', icon: '✂️' },
+            { key: 'bevel', label: 'Bis', icon: '🔧' },
+            { key: 'mount', label: 'Mon', icon: '🔨' },
+            { key: 'quality_check', label: 'Cal', icon: '✅' },
+          ].map((step) => (
+            <button
+              key={step.key}
+              onClick={() => updateTaskStep(row.original.id, step.key, !row.original[step.key])}
+              className={`p-1 rounded text-xs transition-colors ${
+                row.original[step.key]
+                  ? 'bg-green-100 text-green-700 border border-green-300'
+                  : 'bg-gray-100 text-gray-600 border border-gray-300 hover:bg-gray-200'
+              }`}
+              title={step.label}
+            >
+              <div className="text-xs">{step.icon}</div>
+            </button>
+          ))}
+        </div>
+      ),
+    },
+    {
+      id: 'actions',
+      header: 'Acciones',
+      cell: ({ row }) => (
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => handleEdit(row.original)}
+            className="text-blue-600 hover:text-blue-800"
+            title="Editar"
+          >
+            <Edit size={16} />
+          </button>
+        </div>
+      ),
+    },
+  ], []);
 
-  if (loading) return <LoadingSpinner />;
+  const filteredData = useMemo(() => {
+    return tasks.filter(task => {
+      const clientName = `${task.contracts?.clients?.first_name || ''} ${task.contracts?.clients?.last_name || ''}`;
+      return clientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+             task.contracts?.clients?.ci?.includes(searchTerm) ||
+             task.contracts?.frame?.toLowerCase().includes(searchTerm.toLowerCase());
+    });
+  }, [tasks, searchTerm]);
 
   return (
     <div className="space-y-6">
@@ -199,147 +305,15 @@ const Tasks = () => {
         </button>
       </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-lg shadow-sm p-4">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-            <input
-              type="text"
-              placeholder="Buscar por cliente, CI o armadura..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            <option value="all">Todas las tareas</option>
-            <option value="pending">Pendientes</option>
-            <option value="in_progress">En progreso</option>
-            <option value="completed">Completadas</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Tasks List */}
-      <div className="space-y-4">
-        {filteredTasks.map((task) => {
-          const progress = getTaskProgress(task);
-          const progressColor = getProgressColor(progress.percentage);
-          
-          return (
-            <div key={task.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center space-x-4">
-                  <div className="flex items-center space-x-2">
-                    <User size={20} className="text-gray-600" />
-                    <div>
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        {task.contracts?.clients?.first_name} {task.contracts?.clients?.last_name}
-                      </h3>
-                      <p className="text-sm text-gray-600">CI: {task.contracts?.clients?.ci}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Calendar size={16} className="text-gray-600" />
-                    <span className="text-sm text-gray-600">
-                      {format(new Date(task.assigned_date), 'dd MMM yyyy', { locale: es })}
-                    </span>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-4">
-                  <div className="text-right">
-                    <p className="text-sm text-gray-600">Progreso</p>
-                    <p className="font-semibold">{progress.completed}/{progress.total}</p>
-                  </div>
-                  <button
-                    onClick={() => handleEdit(task)}
-                    className="text-blue-600 hover:text-blue-800"
-                  >
-                    <Edit size={20} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Progress Bar */}
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">
-                    Progreso de Producción
-                  </span>
-                  <span className="text-sm text-gray-600">
-                    {Math.round(progress.percentage)}%
-                  </span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div
-                    className={`h-2 rounded-full transition-all duration-300 ${progressColor}`}
-                    style={{ width: `${progress.percentage}%` }}
-                  ></div>
-                </div>
-              </div>
-
-              {/* Task Steps */}
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-4">
-                {[
-                  { key: 'measure', label: 'Medición', icon: '📏' },
-                  { key: 'mark', label: 'Marcado', icon: '✏️' },
-                  { key: 'cut', label: 'Corte', icon: '✂️' },
-                  { key: 'bevel', label: 'Biselado', icon: '🔧' },
-                  { key: 'mount', label: 'Montaje', icon: '🔨' },
-                  { key: 'quality_check', label: 'Control', icon: '✅' },
-                ].map((step) => (
-                  <div key={step.key} className="text-center">
-                    <button
-                      onClick={() => updateTaskStep(task.id, step.key, !task[step.key])}
-                      className={`w-full p-3 rounded-lg border-2 transition-colors ${
-                        task[step.key]
-                          ? 'bg-green-50 border-green-500 text-green-700'
-                          : 'bg-gray-50 border-gray-300 text-gray-600 hover:bg-gray-100'
-                      }`}
-                    >
-                      <div className="text-2xl mb-1">{step.icon}</div>
-                      <div className="text-xs font-medium">{step.label}</div>
-                      {task[step.key] && (
-                        <CheckSquare size={16} className="mx-auto mt-1 text-green-600" />
-                      )}
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              {/* Contract Info */}
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                  <div>
-                    <span className="text-gray-600">Armadura:</span>
-                    <p className="font-medium">{task.contracts?.frame || 'No especificado'}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Estado del Contrato:</span>
-                    <p className="font-medium">{task.contracts?.status}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Total:</span>
-                    <p className="font-medium text-green-600">${task.contracts?.total?.toLocaleString()}</p>
-                  </div>
-                </div>
-                {task.notes && (
-                  <div className="mt-3 pt-3 border-t border-gray-200">
-                    <span className="text-gray-600 text-sm">Notas:</span>
-                    <p className="text-sm mt-1">{task.notes}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <Table
+        data={filteredData}
+        columns={columns}
+        searchValue={searchTerm}
+        onSearchChange={setSearchTerm}
+        searchPlaceholder="Buscar por cliente, CI o armadura..."
+        loading={loading}
+        emptyMessage="No se encontraron tareas"
+      />
 
       {/* Modal */}
       <Modal

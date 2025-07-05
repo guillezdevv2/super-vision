@@ -1,11 +1,14 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Search, Edit, Trash2, Phone, Mail, MapPin } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Plus, Edit, Trash2, Phone, Mail, MapPin } from 'lucide-react';
+import { ColumnDef } from '@tanstack/react-table';
 import { supabase } from '../config/supabase';
 import { Client } from '../types';
 import Modal from '../components/UI/Modal';
-import LoadingSpinner from '../components/UI/LoadingSpinner';
+import Table from '../components/UI/Table';
+import { useAuth } from '../contexts/AuthContext';
 
 const Clients = () => {
+  const { user } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -20,6 +23,8 @@ const Clients = () => {
     phone: '',
     is_active: true,
   });
+
+  const canManage = user?.role === 'admin' || user?.role === 'reception';
 
   useEffect(() => {
     fetchClients();
@@ -43,6 +48,8 @@ const Clients = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManage) return;
+
     try {
       if (editingClient) {
         const { error } = await supabase
@@ -62,10 +69,13 @@ const Clients = () => {
       resetForm();
     } catch (error) {
       console.error('Error saving client:', error);
+      alert('Error al guardar cliente. Verifica los permisos.');
     }
   };
 
   const handleEdit = (client: Client) => {
+    if (!canManage) return;
+    
     setEditingClient(client);
     setFormData({
       first_name: client.first_name,
@@ -80,17 +90,35 @@ const Clients = () => {
   };
 
   const handleDelete = async (id: number) => {
+    if (!canManage) return;
+    
     if (window.confirm('¿Estás seguro de que quieres eliminar este cliente?')) {
       try {
         const { error } = await supabase
           .from('clients')
-          .delete()
+          .update({ is_active: false })
           .eq('id', id);
         if (error) throw error;
         fetchClients();
       } catch (error) {
-        console.error('Error deleting client:', error);
+        console.error('Error deactivating client:', error);
+        alert('Error al desactivar cliente.');
       }
+    }
+  };
+
+  const toggleClientStatus = async (id: number, currentStatus: boolean) => {
+    if (!canManage) return;
+    
+    try {
+      const { error } = await supabase
+        .from('clients')
+        .update({ is_active: !currentStatus })
+        .eq('id', id);
+      if (error) throw error;
+      fetchClients();
+    } catch (error) {
+      console.error('Error updating client status:', error);
     }
   };
 
@@ -107,108 +135,142 @@ const Clients = () => {
     setEditingClient(null);
   };
 
-  const filteredClients = clients.filter(client =>
-    client.first_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    client.last_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    client.ci.includes(searchTerm)
-  );
+  const columns = useMemo<ColumnDef<Client>[]>(() => [
+    {
+      accessorKey: 'first_name',
+      header: 'Nombre',
+      cell: ({ row }) => (
+        <div>
+          <div className="font-medium text-gray-900">
+            {row.original.first_name} {row.original.last_name}
+          </div>
+          <div className="text-sm text-gray-500">CI: {row.original.ci}</div>
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'phone',
+      header: 'Contacto',
+      cell: ({ row }) => (
+        <div className="space-y-1">
+          {row.original.phone && (
+            <div className="flex items-center text-sm text-gray-600">
+              <Phone size={14} className="mr-2" />
+              <span>{row.original.phone}</span>
+            </div>
+          )}
+          {row.original.email && (
+            <div className="flex items-center text-sm text-gray-600">
+              <Mail size={14} className="mr-2" />
+              <span>{row.original.email}</span>
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'address',
+      header: 'Dirección',
+      cell: ({ row }) => (
+        <div className="max-w-xs">
+          {row.original.address ? (
+            <div className="flex items-start text-sm text-gray-600">
+              <MapPin size={14} className="mr-2 mt-0.5 flex-shrink-0" />
+              <span className="truncate">{row.original.address}</span>
+            </div>
+          ) : (
+            <span className="text-gray-400">No especificada</span>
+          )}
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'is_active',
+      header: 'Estado',
+      cell: ({ row }) => (
+        <button
+          onClick={() => toggleClientStatus(row.original.id, row.original.is_active)}
+          disabled={!canManage}
+          className={`px-2 py-1 text-xs font-semibold rounded-full ${
+            row.original.is_active 
+              ? 'bg-green-100 text-green-800 hover:bg-green-200' 
+              : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+          } ${!canManage ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+        >
+          {row.original.is_active ? 'Activo' : 'Inactivo'}
+        </button>
+      ),
+    },
+    {
+      accessorKey: 'created_at',
+      header: 'Fecha de Registro',
+      cell: ({ row }) => (
+        <span className="text-sm text-gray-600">
+          {new Date(row.original.created_at).toLocaleDateString('es-ES')}
+        </span>
+      ),
+    },
+    {
+      id: 'actions',
+      header: 'Acciones',
+      cell: ({ row }) => (
+        <div className="flex items-center space-x-2">
+          {canManage && (
+            <>
+              <button
+                onClick={() => handleEdit(row.original)}
+                className="text-blue-600 hover:text-blue-800"
+                title="Editar"
+              >
+                <Edit size={16} />
+              </button>
+              <button
+                onClick={() => handleDelete(row.original.id)}
+                className="text-red-600 hover:text-red-800"
+                title="Eliminar"
+              >
+                <Trash2 size={16} />
+              </button>
+            </>
+          )}
+        </div>
+      ),
+    },
+  ], [canManage]);
 
-  if (loading) return <LoadingSpinner />;
+  const filteredData = useMemo(() => {
+    return clients.filter(client =>
+      client.first_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      client.last_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      client.ci.includes(searchTerm) ||
+      (client.email && client.email.toLowerCase().includes(searchTerm.toLowerCase()))
+    );
+  }, [clients, searchTerm]);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900">Clientes</h1>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center space-x-2"
-        >
-          <Plus size={20} />
-          <span>Nuevo Cliente</span>
-        </button>
+        {canManage && (
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+          >
+            <Plus size={20} />
+            <span>Nuevo Cliente</span>
+          </button>
+        )}
       </div>
 
-      {/* Search */}
-      <div className="bg-white rounded-lg shadow-sm p-4">
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-          <input
-            type="text"
-            placeholder="Buscar por nombre o CI..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-        </div>
-      </div>
-
-      {/* Clients Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredClients.map((client) => (
-          <div key={client.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">
-                {client.first_name} {client.last_name}
-              </h3>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => handleEdit(client)}
-                  className="text-blue-600 hover:text-blue-800"
-                >
-                  <Edit size={16} />
-                </button>
-                <button
-                  onClick={() => handleDelete(client.id)}
-                  className="text-red-600 hover:text-red-800"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            </div>
-            
-            <div className="space-y-2">
-              <div className="flex items-center text-sm text-gray-600">
-                <span className="font-medium">CI:</span>
-                <span className="ml-2">{client.ci}</span>
-              </div>
-              
-              {client.phone && (
-                <div className="flex items-center text-sm text-gray-600">
-                  <Phone size={14} className="mr-2" />
-                  <span>{client.phone}</span>
-                </div>
-              )}
-              
-              {client.email && (
-                <div className="flex items-center text-sm text-gray-600">
-                  <Mail size={14} className="mr-2" />
-                  <span>{client.email}</span>
-                </div>
-              )}
-              
-              {client.address && (
-                <div className="flex items-center text-sm text-gray-600">
-                  <MapPin size={14} className="mr-2" />
-                  <span>{client.address}</span>
-                </div>
-              )}
-            </div>
-            
-            <div className="mt-4 flex items-center justify-between">
-              <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                client.is_active 
-                  ? 'bg-green-100 text-green-800' 
-                  : 'bg-gray-100 text-gray-800'
-              }`}>
-                {client.is_active ? 'Activo' : 'Inactivo'}
-              </span>
-              <span className="text-xs text-gray-500">
-                {new Date(client.created_at).toLocaleDateString('es-ES')}
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
+      <Table
+        data={filteredData}
+        columns={columns}
+        searchValue={searchTerm}
+        onSearchChange={setSearchTerm}
+        searchPlaceholder="Buscar por nombre, CI o email..."
+        loading={loading}
+        emptyMessage="No se encontraron clientes"
+      />
 
       {/* Modal */}
       <Modal
