@@ -58,6 +58,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const fetchUserProfile = async (userId: string) => {
     try {
+      // First try to get user profile
       const { data, error } = await supabase
         .from('users')
         .select('*')
@@ -66,13 +67,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         .single();
 
       if (error) {
+        // If user doesn't exist in users table, sign out
         console.error('Error fetching user profile:', error);
+        await supabase.auth.signOut();
         setUser(null);
       } else {
         setUser(data);
       }
     } catch (error) {
       console.error('Error fetching user profile:', error);
+      // If there's an error, sign out to prevent infinite loops
+      await supabase.auth.signOut();
       setUser(null);
     } finally {
       setLoading(false);

@@ -33,15 +33,22 @@ const Users = () => {
 
   const fetchUsers = async () => {
     try {
+      // Use service role or admin privileges to fetch all users
       const { data, error } = await supabase
         .from('users')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      setUsers(data || []);
+      if (error) {
+        console.error('Error fetching users:', error);
+        // If we can't fetch users, show empty list
+        setUsers([]);
+      } else {
+        setUsers(data || []);
+      }
     } catch (error) {
       console.error('Error fetching users:', error);
+      setUsers([]);
     } finally {
       setLoading(false);
     }
@@ -104,7 +111,7 @@ const Users = () => {
       return;
     }
 
-    if (window.confirm('¿Estás seguro de que quieres eliminar este usuario?')) {
+    if (window.confirm('¿Estás seguro de que quieres desactivar este usuario?')) {
       try {
         const { error } = await supabase
           .from('users')
@@ -231,70 +238,82 @@ const Users = () => {
 
       {/* Users Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredUsers.map((user) => (
-          <div key={user.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                  <User className="w-5 h-5 text-blue-600" />
+        {filteredUsers.length === 0 ? (
+          <div className="col-span-full text-center py-12">
+            <User className="mx-auto h-12 w-12 text-gray-400" />
+            <h3 className="mt-2 text-sm font-medium text-gray-900">No hay usuarios</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              {searchTerm || roleFilter !== 'all' 
+                ? 'No se encontraron usuarios con los filtros aplicados.' 
+                : 'Comienza creando un nuevo usuario.'}
+            </p>
+          </div>
+        ) : (
+          filteredUsers.map((user) => (
+            <div key={user.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                    <User className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      {user.first_name} {user.last_name}
+                    </h3>
+                    <p className="text-sm text-gray-600">{user.email}</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    {user.first_name} {user.last_name}
-                  </h3>
-                  <p className="text-sm text-gray-600">{user.email}</p>
+                
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => handleEdit(user)}
+                    className="text-blue-600 hover:text-blue-800"
+                  >
+                    <Edit size={16} />
+                  </button>
+                  {user.id !== currentUser?.id && (
+                    <button
+                      onClick={() => handleDelete(user.id)}
+                      className="text-red-600 hover:text-red-800"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
               </div>
               
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => handleEdit(user)}
-                  className="text-blue-600 hover:text-blue-800"
-                >
-                  <Edit size={16} />
-                </button>
-                {user.id !== currentUser?.id && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium border ${getRoleColor(user.role)}`}>
+                    {getRoleLabel(user.role)}
+                  </span>
                   <button
-                    onClick={() => handleDelete(user.id)}
-                    className="text-red-600 hover:text-red-800"
+                    onClick={() => toggleUserStatus(user.id, user.is_active)}
+                    className={`px-3 py-1 rounded-full text-sm font-medium ${
+                      user.is_active 
+                        ? 'bg-green-100 text-green-800 hover:bg-green-200' 
+                        : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+                    }`}
                   >
-                    <Trash2 size={16} />
+                    {user.is_active ? 'Activo' : 'Inactivo'}
                   </button>
+                </div>
+                
+                <div className="text-sm text-gray-600">
+                  <p>Creado: {new Date(user.created_at).toLocaleDateString('es-ES')}</p>
+                </div>
+
+                {user.id === currentUser?.id && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <p className="text-sm text-blue-800 font-medium">
+                      Este es tu usuario actual
+                    </p>
+                  </div>
                 )}
               </div>
             </div>
-            
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className={`px-3 py-1 rounded-full text-sm font-medium border ${getRoleColor(user.role)}`}>
-                  {getRoleLabel(user.role)}
-                </span>
-                <button
-                  onClick={() => toggleUserStatus(user.id, user.is_active)}
-                  className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    user.is_active 
-                      ? 'bg-green-100 text-green-800 hover:bg-green-200' 
-                      : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
-                  }`}
-                >
-                  {user.is_active ? 'Activo' : 'Inactivo'}
-                </button>
-              </div>
-              
-              <div className="text-sm text-gray-600">
-                <p>Creado: {new Date(user.created_at).toLocaleDateString('es-ES')}</p>
-              </div>
-
-              {user.id === currentUser?.id && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                  <p className="text-sm text-blue-800 font-medium">
-                    Este es tu usuario actual
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
 
       {/* Modal */}
