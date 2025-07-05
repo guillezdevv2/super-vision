@@ -33,32 +33,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   useEffect(() => {
     // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        fetchUserProfile(session.user.id);
-      } else {
+    const getInitialSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session?.user) {
+          await loadUserProfile(session.user.id);
+        }
+      } catch (error) {
+        console.error('Error getting initial session:', error);
+      } finally {
         setLoading(false);
       }
-    });
+    };
+
+    getInitialSession();
 
     // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
-        await fetchUserProfile(session.user.id);
-      } else {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        await loadUserProfile(session.user.id);
+      } else if (event === 'SIGNED_OUT') {
         setUser(null);
-        setLoading(false);
       }
+      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  const fetchUserProfile = async (userId: string) => {
+  const loadUserProfile = async (userId: string) => {
     try {
-      // First try to get user profile
       const { data, error } = await supabase
         .from('users')
         .select('*')
@@ -66,35 +71,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         .eq('is_active', true)
         .single();
 
-      if (error) {
-        // If user doesn't exist in users table, sign out
-        console.error('Error fetching user profile:', error);
+      if (error || !data) {
+        console.error('User not found or inactive:', error);
         await supabase.auth.signOut();
         setUser(null);
-      } else {
-        setUser(data);
+        return;
       }
+
+      setUser(data);
     } catch (error) {
-      console.error('Error fetching user profile:', error);
-      // If there's an error, sign out to prevent infinite loops
+      console.error('Error loading user profile:', error);
       await supabase.auth.signOut();
       setUser(null);
-    } finally {
-      setLoading(false);
     }
   };
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (error) throw error;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) throw error;
+
+      if (data.user) {
+        await loadUserProfile(data.user.id);
+      }
+    } catch (error) {
+      setLoading(false);
+      throw error;
+    }
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
+    setLoading(true);
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+    } catch (error) {
+      console.error('Error signing out:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
